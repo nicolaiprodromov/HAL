@@ -1,0 +1,39 @@
+# Cargo. This crate is a binary, so Cargo.lock stays tracked (`--locked` installs).
+# `debug/` is the non-workspace layout from the upstream Rust gitignore.
+debug/
+target/
+
+# rustfmt backups and MSVC debug symbols
+**/*.rs.bk
+*.pdb
+
+# Generated project tree next to a source file (examples/.hal/, and any other
+# directory a `hal build` / `hal run` writes). Holds logic.md, artifacts/,
+# runtime.yaml, build.lock, memory/*.sqlite, runs/, and logs/.
+.hal/
+
+# Secrets. Matches a root .env and HAL/.env (either may hold the API token).
+.env
+.env.*
+!.env.example
+
+# Logs, including tracing-appender daily rolls (hal.log.YYYY-MM-DD)
+# and an in-repo HAL_TRACE_EVENTS capture.
+*.log
+*.log.*
+*.jsonl
+
+# SQLite memory databases, including WAL sidecars, if one lands outside .hal/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal
+
+# Editor and OS clutter
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/

@@ -1,0 +1,20 @@
+# chron.hal — a minimal cron/at-like scheduler.
+# Users describe jobs in plain English; HAL decides how to implement them.
+
+Build a tiny command-line scheduler called "chron" that:
+
+- reads the jobs file named by its first argument (default: `jobs.txt`
+  in the current directory), one line per job, with the format:
+    `<when>  ::  <shell command>`
+  where `<when>` is either
+      - "every Ns" / "every Nm" / "every Nh" for recurring jobs, or
+      - an RFC3339 timestamp for one-shot jobs.
+  Blank lines and lines starting with `#` are ignored.
+- keeps running in the foreground, logging each triggered job with a
+  timestamp prefix like `[2025-01-01T12:00:00Z] running: echo hi`.
+- exits cleanly on Ctrl-C with a summary of how many jobs fired.
+
+When the jobs file is missing or empty, print a friendly message listing
+the expected format and exit 0.
+
+Prefer POSIX-portable implementations. Avoid network access.

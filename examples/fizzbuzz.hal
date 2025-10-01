@@ -1,0 +1,9 @@
+# fizzbuzz.hal — a canonical smoke test.
+
+Print the numbers 1 through 30, one per line, except:
+
+- multiples of 3 print `Fizz`
+- multiples of 5 print `Buzz`
+- multiples of both print `FizzBuzz`
+
+Exit 0. No arguments, no input, no network.

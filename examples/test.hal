@@ -1,0 +1,18 @@
+
+
+jobs = ["Hello", " there, ", "world!"]
+
+// interval value is provided in ms
+interval = 1000
+
+x = 0
+
+chron(jobs, interval):
+    while x < 15:
+        for job in jobs:
+            // do not print on a newline, only the last word of the list has a newline after
+            print job
+            sleep interval
+        x+1
+
+chron()

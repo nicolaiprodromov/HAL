@@ -1,0 +1,11 @@
+# Jobs for chron.hal: <when> :: <shell command>
+# <when> is "every Ns" / "every Nm" / "every Nh", or an RFC3339 timestamp (one-shot).
+#
+# From the HAL directory:   just run examples/chron.hal examples/jobs.txt
+# From examples/:           hal chron.hal          (uses ./jobs.txt)
+# Stop with Ctrl-C; chron prints how many jobs fired.
+
+every 5s :: echo "tick"
+every 15s :: date -u +"%H:%M:%S chron is alive"
+every 1m :: echo "a minute went by"
+2030-01-01T00:00:00Z :: echo "happy new year 2030"

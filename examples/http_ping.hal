@@ -1,0 +1,16 @@
+# http_ping.hal — a minimal HTTP liveness checker.
+
+Accept one command-line argument: a URL.
+
+Issue a single HTTP GET against it with a 5-second timeout. Print one
+of:
+
+    OK <status-code> <url>
+    FAIL <reason> <url>
+
+Exit 0 on any 2xx response. Exit 1 on non-2xx. Exit 2 on a network
+or timeout error.
+
+No redirects needed. No auth. No retries.
+
+If no argument is provided the app should return error. Do not imeplement with an example url. this is production code
