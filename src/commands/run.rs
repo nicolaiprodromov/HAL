@@ -84,7 +84,7 @@ pub async fn run(file: &Path, direct: bool, force: bool, args: &[String]) -> Res
         let pause = pause.clone();
         tokio::spawn(async move {
             let result = async {
-                let needs_llm = needs_build || config.conductor_reflect;
+                let needs_llm = needs_build || config.reflector_enabled;
                 let llm = if needs_llm {
                     Some(Arc::new(LlmClient::new(config.clone())?))
                 } else {
@@ -105,7 +105,7 @@ pub async fn run(file: &Path, direct: bool, force: bool, args: &[String]) -> Res
 
                 // A run the user stopped with Ctrl-C is not worth an LLM
                 // turn, and they are waiting for the prompt back.
-                if config.conductor_reflect && !container::interrupted() {
+                if config.reflector_enabled && !container::interrupted() {
                     if let Some(llm) = llm {
                         let summary = reflector::RunSummary {
                             image: r.image.clone(),
@@ -123,7 +123,7 @@ pub async fn run(file: &Path, direct: bool, force: bool, args: &[String]) -> Res
                             llm,
                             summary,
                             &tx,
-                            config.conductor_reflect_max_turns,
+                            config.reflector_max_turns,
                             Some(pause.clone()),
                         )
                         .await;

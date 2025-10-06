@@ -65,13 +65,13 @@ run-direct-release FILE *ARGS:
 test:
     cargo test --lib --bins --tests
 
-# Run the live xAI/Docker suite (needs MAPERTUI_XAI_TOKEN + dockerd).
+# Run the live API/Docker suite (needs HAL_API_TOKEN + dockerd).
 test-live:
-    cargo test --test live_xai -- --ignored --nocapture
+    cargo test --test live -- --ignored --nocapture
 
 # Just the embeddings live check (fastest live test).
 test-embeddings:
-    cargo test --test live_xai xai_embeddings_and_vector_memory -- --ignored --nocapture
+    cargo test --test live embeddings_and_vector_memory -- --ignored --nocapture
 
 # rustfmt + clippy (-D warnings). CI-equivalent quality gate.
 lint:

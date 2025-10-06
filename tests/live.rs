@@ -1,8 +1,8 @@
-//! Live end-to-end test against xAI/Grok. Ignored by default — run with:
+//! Live end-to-end tests against the configured model API. Ignored by default — run with:
 //!
-//!     cargo test --test live_xai -- --ignored --nocapture
+//!     cargo test --test live -- --ignored --nocapture
 //!
-//! Requires `MAPERTUI_XAI_TOKEN` in the environment (loaded from `HAL/.env`
+//! Requires `HAL_API_TOKEN` in the environment (loaded from `HAL/.env`
 //! automatically via dotenvy).
 
 use std::sync::Arc;
@@ -32,11 +32,11 @@ async fn fizzbuzz_builds_end_to_end() {
     let config = Config::from_env();
     assert!(
         config
-            .xai_api_key
+            .api_key
             .as_deref()
             .map(|s| !s.is_empty())
             .unwrap_or(false),
-        "MAPERTUI_XAI_TOKEN must be set in env or HAL/.env for this test"
+        "HAL_API_TOKEN must be set in env or HAL/.env for this test"
     );
     let llm = Arc::new(LlmClient::new(config).expect("build llm client"));
     let memory = Arc::new(Memory::open(&project.memory_db()).await.unwrap());
@@ -122,11 +122,8 @@ fn load_env() {
 
 fn require_key(c: &Config) {
     assert!(
-        c.xai_api_key
-            .as_deref()
-            .map(|s| !s.is_empty())
-            .unwrap_or(false),
-        "MAPERTUI_XAI_TOKEN must be set in env or HAL/.env for this test"
+        c.api_key.as_deref().map(|s| !s.is_empty()).unwrap_or(false),
+        "HAL_API_TOKEN must be set in env or HAL/.env for this test"
     );
 }
 
@@ -136,7 +133,7 @@ fn require_key(c: &Config) {
 ///  - `Memory` wired to the real embedder returns the similar note first
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore]
-async fn xai_embeddings_and_vector_memory() {
+async fn embeddings_and_vector_memory() {
     load_env();
     let config = Config::from_env();
     require_key(&config);
@@ -212,7 +209,7 @@ async fn xai_embeddings_and_vector_memory() {
 
 /// End-to-end: build FizzBuzz, run it in Docker, let the Reflector observe
 /// the run, and verify a new LLM-authored note landed in Conductor memory.
-/// Requires both MAPERTUI_XAI_TOKEN and a working Docker daemon.
+/// Requires both HAL_API_TOKEN and a working Docker daemon.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore]
 async fn reflector_writes_memory_after_container_run() {
@@ -279,7 +276,7 @@ async fn reflector_writes_memory_after_container_run() {
         llm.clone(),
         summary,
         &tx,
-        config.conductor_reflect_max_turns,
+        config.reflector_max_turns,
         None,
     )
     .await

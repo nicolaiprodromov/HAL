@@ -43,7 +43,7 @@ impl std::fmt::Debug for LlmClient {
         f.debug_struct("LlmClient")
             .field("model", &self.model)
             .field("base_url", &self.config.base_url)
-            .field("xai_api_key_set", &self.config.xai_api_key.is_some())
+            .field("api_key_set", &self.config.api_key.is_some())
             .finish()
     }
 }
@@ -67,11 +67,11 @@ impl LlmClient {
     }
 
     /// Test-only constructor: succeeds with a dummy key even when
-    /// `MAPERTUI_XAI_TOKEN` is unset.
+    /// `HAL_API_TOKEN` is unset.
     pub fn dummy() -> Result<Self> {
         let mut config = Config::from_env();
-        if config.xai_api_key.is_none() {
-            config.xai_api_key = Some("dummy-key".into());
+        if config.api_key.is_none() {
+            config.api_key = Some("dummy-key".into());
         }
         Self::new(config)
     }
@@ -307,15 +307,13 @@ mod tests {
 
     #[test]
     fn missing_key_is_a_clear_error() {
-        let prev = std::env::var("MAPERTUI_XAI_TOKEN").ok();
-        std::env::remove_var("MAPERTUI_XAI_TOKEN");
+        let prev = std::env::var("HAL_API_TOKEN").ok();
+        std::env::remove_var("HAL_API_TOKEN");
         let cfg = Config::from_env();
         let err = LlmClient::new(cfg).unwrap_err();
-        assert!(format!("{err}")
-            .to_lowercase()
-            .contains("mapertui_xai_token"));
+        assert!(format!("{err}").to_lowercase().contains("hal_api_token"));
         if let Some(v) = prev {
-            std::env::set_var("MAPERTUI_XAI_TOKEN", v);
+            std::env::set_var("HAL_API_TOKEN", v);
         }
     }
 

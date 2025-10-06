@@ -1479,7 +1479,7 @@ async fn run_and_reflect(
 ) -> Result<i32> {
     use crate::agents::{conductor, reflector};
     let r = conductor::run(rt.project.clone(), rt.memory.clone(), &rt.runtime_args, tx).await?;
-    if rt.config.conductor_reflect {
+    if rt.config.reflector_enabled {
         let summary = reflector::RunSummary {
             image: r.image.clone(),
             command: r.command.clone(),
@@ -1496,7 +1496,7 @@ async fn run_and_reflect(
             rt.llm.clone(),
             summary,
             tx,
-            rt.config.conductor_reflect_max_turns,
+            rt.config.reflector_max_turns,
             pause,
         )
         .await;
