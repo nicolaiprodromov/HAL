@@ -208,7 +208,7 @@ async fn embeddings_and_vector_memory() {
 }
 
 /// End-to-end: build FizzBuzz, run it in Docker, let the Reflector observe
-/// the run, and verify a new LLM-authored note landed in Conductor memory.
+/// the run, and verify a new LLM-authored note landed in Reflector memory (separate from the Conductor's run facts).
 /// Requires both HAL_API_TOKEN and a working Docker daemon.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore]
@@ -285,15 +285,15 @@ async fn reflector_writes_memory_after_container_run() {
     drop(tx);
     let _ = sink.await;
 
-    let after_reflect = memory.count(Agent::Conductor).await.unwrap();
+    let after_reflect = memory.count(Agent::Reflector).await.unwrap();
     assert!(
-        after_reflect > after_run,
-        "reflector should have added at least one note (before={after_run}, after={after_reflect})"
+        after_reflect > 0,
+        "reflector should have added at least one note (conductor run facts={after_run}, reflector notes={after_reflect})"
     );
 
     // And that note must be retrievable via vector search.
     let hits = memory
-        .search(Agent::Conductor, "fizzbuzz image command", 5)
+        .search(Agent::Reflector, "fizzbuzz image command", 5)
         .await
         .unwrap();
     assert!(!hits.is_empty(), "reflector notes should be searchable");

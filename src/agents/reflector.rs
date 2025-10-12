@@ -1,10 +1,12 @@
 //! Reflector agent.
 //!
 //! The Conductor is intentionally deterministic (bollard runs the
-//! container, captures logs + exit code). The Reflector runs *after* that,
-//! reads the run's artefacts from disk, and writes structured
-//! observations into the Conductor's memory namespace so that the next
-//! Interpreter/Architect/Conductor cycle can consult them.
+//! container, captures logs + exit code, and records bare run facts in
+//! the `conductor` memory namespace). The Reflector is a first-class LLM
+//! agent that runs *after* that, reads the run's artefacts from disk, and
+//! writes structured observations and fixes into its own `reflector`
+//! memory namespace so that the next Interpreter/Architect cycle can
+//! consult them.
 //!
 //! Without this step the memory loop is short-circuited at runtime:
 //! the agents would only ever see their own build-time notes, never the
@@ -78,8 +80,8 @@ pub fn build_user_message(project: &Project, s: &RunSummary) -> String {
          ## Stderr tail (last lines)\n```\n{stderr_tail}\n```\n\n\
          ## What to do\n\
          1. Decide what future HAL runs on this project would benefit from knowing.\n\
-         2. Call `memory_write` one or more times with concise, durable observations\n   (what worked, what failed, concrete fixes, image/command gotchas).\n\
-         3. If relevant, `memory_search` first to avoid duplicating prior notes.\n\
+         2. Call `memory_write` one or more times (notes land in your own `reflector` namespace) with concise, durable observations\n   (what worked, what failed, concrete fixes, image/command gotchas).\n\
+         3. If relevant, `memory_search` (default namespace = yours) first to avoid duplicating prior notes.\n\
          4. When done, reply with a single line: `REFLECTION_DONE`.\n",
         verdict = verdict,
         exit = s.exit_code,
@@ -219,6 +221,13 @@ fn walk_dir(
     }
 }
 
+/// Compose the Reflector's system preamble: its own identity document,
+/// the environment block, and the prior-memory digest. The Conductor
+/// identity is deliberately not included.
+pub fn build_preamble(env: &str, digest: &str) -> String {
+    format!("{}\n\n{env}\n{digest}", identity::REFLECTOR)
+}
+
 /// Run the Reflector against a completed run. Errors from the LLM are
 /// logged and swallowed — a reflection failure should never crash `hal run`.
 pub async fn run(
@@ -232,11 +241,11 @@ pub async fn run(
 ) -> Result<()> {
     let _ = events.send(Event::Phase(crate::events::Phase::Reflecting));
     let _ = events.send(Event::AgentLog {
-        agent: AgentKind::Conductor,
-        message: format!("reflector: --> {} …", llm.model),
+        agent: AgentKind::Reflector,
+        message: format!("--> {} …", llm.model),
     });
 
-    let mut ctx = ToolContext::new(project.clone(), memory.clone(), AgentKind::Conductor)
+    let mut ctx = ToolContext::new(project.clone(), memory.clone(), AgentKind::Reflector)
         .with_llm(llm.clone())
         .with_events(events.clone());
     if let Some(p) = pause.clone() {
@@ -244,29 +253,7 @@ pub async fn run(
     }
 
     let digest = super::context::memory_digest(&memory, 5).await;
-    let preamble = format!(
-        "{identity}\n\n\
-         {env}\n\
-         ## Reflector mode\n\
-         The container has already run (deterministic execution is done).\n\
-         Your job is **observation**, not re-execution. You cannot re-run\n\
-         the container from here. Focus on writing concise, durable\n\
-         memory notes that future Interpreter/Architect/Conductor runs\n\
-         will read automatically — every new build starts with a digest\n\
-         of the most recent notes from all three namespaces, so notes\n\
-         you write now *will* be seen.\n\
-         Namespace: Conductor.\n\n\
-         ## What the prior phases produced\n\
-         The Interpreter wrote `logic.md`. The Architect wrote the\n\
-         `artifacts/` bundle and `runtime.yaml`. Both are inlined in the\n\
-         user message below so you don't have to re-read them from disk\n\
-         to critique them. Use `files_read` only when you need deeper\n\
-         detail (e.g. a specific artifact file).\n\n\
-         {digest}",
-        identity = identity::CONDUCTOR,
-        env = super::context::env_block(),
-        digest = digest,
-    );
+    let preamble = build_preamble(super::context::env_block(), &digest);
 
     let user_msg = build_user_message_full(&project, &summary);
 
@@ -297,7 +284,7 @@ pub async fn run(
                 agent
                     .stream_prompt(current_msg.clone())
                     .multi_turn(max_turns),
-                AgentKind::Conductor,
+                AgentKind::Reflector,
                 events,
                 pause.as_ref(),
             )
@@ -310,9 +297,9 @@ pub async fn run(
                     let transient =
                         msg.contains("503") || msg.contains("502") || msg.contains("timeout");
                     let _ = events.send(Event::AgentLog {
-                        agent: AgentKind::Conductor,
+                        agent: AgentKind::Reflector,
                         message: format!(
-                            "reflector attempt {}/3 failed (transient={transient}): {}",
+                            "attempt {}/3 failed (transient={transient}): {}",
                             attempt + 1,
                             msg.chars().take(200).collect::<String>()
                         ),
@@ -337,23 +324,20 @@ pub async fn run(
         };
         if !response.is_empty() {
             let _ = events.send(Event::AgentResponse {
-                agent: AgentKind::Conductor,
+                agent: AgentKind::Reflector,
                 text: response.clone(),
             });
             let _ = events.send(Event::AgentLog {
-                agent: AgentKind::Conductor,
-                message: format!(
-                    "reflector: done ({})",
-                    response.lines().next().unwrap_or("")
-                ),
+                agent: AgentKind::Reflector,
+                message: format!("done ({})", response.lines().next().unwrap_or("")),
             });
             return Ok(());
         }
     }
     if let Some(e) = last_err {
         let _ = events.send(Event::AgentLog {
-            agent: AgentKind::Conductor,
-            message: format!("reflector giving up (non-fatal): {e:#}"),
+            agent: AgentKind::Reflector,
+            message: format!("giving up (non-fatal): {e:#}"),
         });
     }
     Ok(())
@@ -363,6 +347,15 @@ pub async fn run(
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn preamble_uses_reflector_identity_not_conductor() {
+        let p = build_preamble("ENV_BLOCK", "DIGEST_BLOCK");
+        assert!(p.starts_with(identity::REFLECTOR));
+        assert!(p.contains("ENV_BLOCK"));
+        assert!(p.contains("DIGEST_BLOCK"));
+        assert!(!p.contains(identity::CONDUCTOR));
+    }
 
     #[test]
     fn user_message_contains_key_fields() {

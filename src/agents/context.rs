@@ -13,7 +13,7 @@
 //!
 //! * [`env_block`] — host OS, arch, container runtime, default image.
 //! * [`memory_digest`] — the top-k most recent notes from *all three*
-//!   agent namespaces (Interpreter, Architect, Conductor/Reflector),
+//!   agent namespaces (Interpreter, Architect, Conductor, Reflector),
 //!   rendered as markdown. This closes the read side of the memory
 //!   loop: reflection notes reach the next build automatically.
 
@@ -79,7 +79,7 @@ fn probe_cmd_version(cmd: &[&str]) -> Option<String> {
 /// preamble with placeholders.
 ///
 /// This is what closes the memory loop: Reflector-written notes (in
-/// the Conductor namespace) are now automatically visible to the
+/// the Reflector namespace) are now automatically visible to the
 /// Interpreter and Architect at the very next build, without the LLM
 /// needing to remember to call `memory_search` first.
 pub async fn memory_digest(memory: &Arc<Memory>, k: usize) -> String {
@@ -87,10 +87,8 @@ pub async fn memory_digest(memory: &Arc<Memory>, k: usize) -> String {
     let namespaces = [
         (Agent::Interpreter, "Interpreter (intent / logic decisions)"),
         (Agent::Architect, "Architect (build / artifact decisions)"),
-        (
-            Agent::Conductor,
-            "Conductor & Reflector (runtime observations)",
-        ),
+        (Agent::Conductor, "Conductor (run facts)"),
+        (Agent::Reflector, "Reflector (runtime observations & fixes)"),
     ];
 
     let mut sections: Vec<String> = Vec::new();
@@ -164,4 +162,27 @@ pub fn clip(s: &str, max: usize) -> String {
 fn one_line_preview(s: &str) -> String {
     let flat: String = s.chars().map(|c| if c == '\n' { ' ' } else { c }).collect();
     clip(&flat, 280)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn digest_separates_conductor_and_reflector_sections() {
+        let m = Arc::new(Memory::in_memory().await.unwrap());
+        m.write(Agent::Conductor, "exit=0 facts").await.unwrap();
+        m.write(Agent::Reflector, "use slim image").await.unwrap();
+        let d = memory_digest(&m, 5).await;
+        let c = d.find("### Conductor (run facts)").expect("conductor");
+        let r = d
+            .find("### Reflector (runtime observations & fixes)")
+            .expect("reflector");
+        assert!(c < r);
+        let (conductor_sec, reflector_sec) = (&d[c..r], &d[r..]);
+        assert!(conductor_sec.contains("exit=0 facts"));
+        assert!(!conductor_sec.contains("use slim image"));
+        assert!(reflector_sec.contains("use slim image"));
+        assert!(!reflector_sec.contains("exit=0 facts"));
+    }
 }

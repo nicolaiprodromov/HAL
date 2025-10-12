@@ -13,6 +13,7 @@ use crate::events::{Agent, Phase};
 pub const ARCHITECT_LOGO: &str = include_str!("../../HAL/architect.logo");
 pub const CONDUCTOR_LOGO: &str = include_str!("../../HAL/conductor.logo");
 pub const INTERPRETER_LOGO: &str = include_str!("../../HAL/interpreter.logo");
+pub const REFLECTOR_LOGO: &str = include_str!("../../HAL/reflector.logo");
 
 // ── palette ─────────────────────────────────────────────────────────
 
@@ -39,6 +40,7 @@ pub fn agent_accent(a: Agent) -> Color {
         Agent::Interpreter => Color::Cyan,
         Agent::Architect => Color::Magenta,
         Agent::Conductor => Color::LightYellow,
+        Agent::Reflector => Color::LightGreen,
     }
 }
 
@@ -60,6 +62,7 @@ pub fn phase_logo(p: Phase) -> Option<&'static str> {
         Phase::Interpreting => Some(INTERPRETER_LOGO),
         Phase::Building => Some(ARCHITECT_LOGO),
         Phase::Running => Some(CONDUCTOR_LOGO),
+        Phase::Reflecting => Some(REFLECTOR_LOGO),
         _ => None,
     }
 }

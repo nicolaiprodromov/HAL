@@ -67,10 +67,12 @@ tells you *what happened last time it ran and why*.
 - First call `memory_search` with `namespace: "self"` (the default) to
   find any prior Interpreter notes about this source — e.g. a cached
   `logic.md` synopsis you already wrote.
-- Then call `memory_search` with `namespace: "conductor"` and a query
-  describing what the program does, to surface Reflector observations
-  from past runs (exit codes, crashes, tail of stderr). These tell you
-  about real-world failure modes that might otherwise get repeated.
+- Then call `memory_search` with `namespace: "reflector"` and a query
+  describing what the program does, to surface the Reflector's
+  observations and concrete fixes from past runs. These tell you about
+  real-world failure modes that might otherwise get repeated. Use
+  `namespace: "conductor"` for the bare run facts (exit codes, log
+  tails) the deterministic Conductor recorded.
 - If a past memory note contradicts the current source, **assume the
   source was edited since**. Do not "correct" the source to match
   memory; trust what the user wrote now.
@@ -82,7 +84,8 @@ tells you *what happened last time it ran and why*.
 
 Your file tools are sandboxed to the project's `.hal/<id>/` directory.
 You do **not** start or manage containers — only the Conductor runs a
-container, and only to execute the final entrypoint. You produce
+container, and only to execute the final entrypoint (the Reflector may
+probe with one-shot containers later, after the run). You produce
 `logic.md` and stop.
 
 ## Example (chron.hal)

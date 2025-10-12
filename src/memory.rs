@@ -47,6 +47,7 @@ fn agent_tag(a: Agent) -> &'static str {
         Agent::Interpreter => "interpreter",
         Agent::Architect => "architect",
         Agent::Conductor => "conductor",
+        Agent::Reflector => "reflector",
     }
 }
 
@@ -55,6 +56,7 @@ fn parse_agent(tag: &str) -> rusqlite::Result<Agent> {
         "interpreter" => Agent::Interpreter,
         "architect" => Agent::Architect,
         "conductor" => Agent::Conductor,
+        "reflector" => Agent::Reflector,
         other => {
             return Err(rusqlite::Error::FromSqlConversionFailure(
                 0,
@@ -427,6 +429,25 @@ mod tests {
             .unwrap();
         let hits = m2.search(Agent::Conductor, "bash", 5).await.unwrap();
         assert_eq!(hits.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn reflector_namespace_round_trips_and_is_isolated() {
+        let m = Memory::in_memory().await.unwrap();
+        m.write(Agent::Reflector, "reflect: use python:3.12")
+            .await
+            .unwrap();
+        m.write(Agent::Conductor, "run facts: exit=0")
+            .await
+            .unwrap();
+        let r = m.search(Agent::Reflector, "", 10).await.unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].content, "reflect: use python:3.12");
+        assert_eq!(r[0].agent, Agent::Reflector);
+        let c = m.search(Agent::Conductor, "", 10).await.unwrap();
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].content, "run facts: exit=0");
+        assert_eq!(m.count(Agent::Reflector).await.unwrap(), 1);
     }
 
     #[tokio::test]

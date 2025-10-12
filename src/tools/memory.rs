@@ -23,9 +23,10 @@ pub struct SearchArgs {
     #[serde(default = "default_k")]
     pub k: usize,
     /// Optional namespace override. Values: `"interpreter"`, `"architect"`,
-    /// `"conductor"`, or `"self"` (default — the calling agent).
+    /// `"conductor"` (raw run facts), `"reflector"` (post-run observations
+    /// and fixes), or `"self"` (default — the calling agent).
     /// Use this from Interpreter/Architect to look up past runtime
-    /// observations written by the Conductor/Reflector.
+    /// observations written by the Reflector.
     #[serde(default)]
     pub namespace: Option<String>,
 }
@@ -38,9 +39,10 @@ fn parse_namespace(s: &str, caller: Agent) -> Result<Agent, MemoryToolError> {
         "" | "self" | "me" => Ok(caller),
         "interpreter" => Ok(Agent::Interpreter),
         "architect" => Ok(Agent::Architect),
-        "conductor" | "reflector" => Ok(Agent::Conductor),
+        "conductor" => Ok(Agent::Conductor),
+        "reflector" => Ok(Agent::Reflector),
         other => Err(MemoryToolError(format!(
-            "unknown namespace {other:?}; expected one of: self, interpreter, architect, conductor"
+            "unknown namespace {other:?}; expected one of: self, interpreter, architect, conductor, reflector"
         ))),
     }
 }
@@ -67,14 +69,14 @@ impl Tool for MemorySearch {
         ToolDefinition {
             name: Self::NAME.into(),
             description:
-                "Search memory notes. Defaults to the calling agent's own namespace. Pass namespace=\"conductor\" to recall runtime observations written by the Reflector after past container runs — Interpreter/Architect should ALWAYS do this before making structural decisions."
+                "Search memory notes. Defaults to the calling agent's own namespace. Pass namespace=\"reflector\" to recall post-run observations and fixes written by the Reflector after past container runs — Interpreter/Architect should ALWAYS do this before making structural decisions. Pass namespace=\"conductor\" for the raw run facts (exit code, log tails)."
                     .into(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "query":     {"type": "string"},
                     "k":         {"type": "integer", "minimum": 1, "default": 5},
-                    "namespace": {"type": "string", "enum": ["self","interpreter","architect","conductor"], "default": "self"}
+                    "namespace": {"type": "string", "enum": ["self","interpreter","architect","conductor","reflector"], "default": "self"}
                 },
                 "required": ["query"]
             }),
@@ -122,6 +124,7 @@ fn agent_label(a: Agent) -> &'static str {
         Agent::Interpreter => "interpreter",
         Agent::Architect => "architect",
         Agent::Conductor => "conductor",
+        Agent::Reflector => "reflector",
     }
 }
 
@@ -240,5 +243,50 @@ mod tests {
             .await
             .unwrap();
         assert!(hits.is_empty(), "interpreter must not see architect notes");
+    }
+
+    #[test]
+    fn parse_namespace_accepts_reflector_and_rejects_unknown() {
+        assert_eq!(
+            parse_namespace("reflector", Agent::Architect).unwrap(),
+            Agent::Reflector
+        );
+        assert_eq!(
+            parse_namespace("Conductor", Agent::Architect).unwrap(),
+            Agent::Conductor
+        );
+        assert_eq!(
+            parse_namespace("self", Agent::Reflector).unwrap(),
+            Agent::Reflector
+        );
+        let err = parse_namespace("nope", Agent::Architect).unwrap_err();
+        assert!(err.0.contains("reflector"));
+    }
+
+    #[tokio::test]
+    async fn reflector_writes_to_own_namespace_visible_to_architect() {
+        let (_d, refl) = ctx(Agent::Reflector).await;
+        let arch = ToolContext::new(refl.project.clone(), refl.memory.clone(), Agent::Architect);
+        MemoryWrite { ctx: refl }
+            .call(WriteArgs {
+                content: "fix: install curl first".into(),
+            })
+            .await
+            .unwrap();
+        let search = |ns: &str| SearchArgs {
+            query: "curl".into(),
+            k: 5,
+            namespace: Some(ns.into()),
+        };
+        let hits = MemorySearch { ctx: arch.clone() }
+            .call(search("reflector"))
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        let none = MemorySearch { ctx: arch }
+            .call(search("conductor"))
+            .await
+            .unwrap();
+        assert!(none.is_empty());
     }
 }

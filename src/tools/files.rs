@@ -197,11 +197,12 @@ impl Tool for FilesWrite {
             Self::NAME,
             format!("path={}\ncontents=\n{}", args.path, args.contents),
         );
-        // Conductor is not allowed to write artifacts.
-        if matches!(self.ctx.agent, Agent::Conductor) {
-            let msg =
-                "files_write is not available to the Conductor (artifacts are read-only at run time)"
-                    .to_string();
+        // Conductor and Reflector are not allowed to write artifacts.
+        if matches!(self.ctx.agent, Agent::Conductor | Agent::Reflector) {
+            let msg = format!(
+                "files_write is not available to the {} (artifacts are read-only at run time)",
+                self.ctx.agent
+            );
             guard.finish_err(msg.clone());
             return Err(FileToolError::Anyhow(msg));
         }
@@ -332,6 +333,26 @@ mod tests {
             .await
             .unwrap_err();
         assert!(format!("{err}").contains("Conductor"));
+    }
+
+    #[tokio::test]
+    async fn reflector_cannot_write_but_can_read() {
+        let (_d, ctx) = ctx(Agent::Reflector).await;
+        let w = FilesWrite { ctx: ctx.clone() };
+        let err = w
+            .call(FilesWriteArgs {
+                path: "artifacts/x".into(),
+                contents: "y".into(),
+            })
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("Reflector"));
+        let src = ctx.project.source.display().to_string();
+        let out = FilesRead { ctx }
+            .call(FilesReadArgs { path: src })
+            .await
+            .unwrap();
+        assert!(out.contents.contains("sleep"));
     }
 
     #[tokio::test]

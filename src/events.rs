@@ -9,6 +9,7 @@ pub enum Agent {
     Interpreter,
     Architect,
     Conductor,
+    Reflector,
 }
 
 impl std::fmt::Display for Agent {
@@ -17,6 +18,7 @@ impl std::fmt::Display for Agent {
             Agent::Interpreter => f.write_str("Interpreter"),
             Agent::Architect => f.write_str("Architect"),
             Agent::Conductor => f.write_str("Conductor"),
+            Agent::Reflector => f.write_str("Reflector"),
         }
     }
 }

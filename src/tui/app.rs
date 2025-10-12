@@ -704,7 +704,7 @@ impl AppState {
         match self.current_phase.map(|i| self.phases[i].phase) {
             Some(Phase::Interpreting) => Agent::Interpreter,
             Some(Phase::Building) => Agent::Architect,
-            Some(Phase::Reflecting) => Agent::Conductor,
+            Some(Phase::Reflecting) => Agent::Reflector,
             _ => Agent::Interpreter,
         }
     }
@@ -942,11 +942,7 @@ fn handle_key<B: std::io::Write>(
             KeyCode::Tab => {
                 // Cycle target agent.
                 let cur = state.steerable_agent();
-                let next = match cur {
-                    Agent::Interpreter => Agent::Architect,
-                    Agent::Architect => Agent::Conductor,
-                    Agent::Conductor => Agent::Interpreter,
-                };
+                let next = next_agent(cur);
                 state.chat.target = Some(next);
                 return Ok(false);
             }
@@ -1580,11 +1576,22 @@ fn push_system_note(state: &mut AppState, msg: &str) {
     }
 }
 
+/// Tab-cycling order: Interpreter → Architect → Conductor → Reflector.
+fn next_agent(cur: Agent) -> Agent {
+    match cur {
+        Agent::Interpreter => Agent::Architect,
+        Agent::Architect => Agent::Conductor,
+        Agent::Conductor => Agent::Reflector,
+        Agent::Reflector => Agent::Interpreter,
+    }
+}
+
 fn agent_key(a: Agent) -> &'static str {
     match a {
         Agent::Interpreter => "interpreter",
         Agent::Architect => "architect",
         Agent::Conductor => "conductor",
+        Agent::Reflector => "reflector",
     }
 }
 
@@ -1592,6 +1599,7 @@ fn parse_agent_key(s: &str) -> Agent {
     match s {
         "architect" => Agent::Architect,
         "conductor" => Agent::Conductor,
+        "reflector" => Agent::Reflector,
         _ => Agent::Interpreter,
     }
 }
@@ -3360,6 +3368,7 @@ fn agent_tag(a: Agent) -> Span<'static> {
         Agent::Interpreter => "[Interpreter]",
         Agent::Architect => "[Architect] ",
         Agent::Conductor => "[Conductor] ",
+        Agent::Reflector => "[Reflector] ",
     };
     Span::styled(txt, Style::default().fg(col).add_modifier(Modifier::BOLD))
 }
@@ -3369,6 +3378,7 @@ fn agent_name(a: Agent) -> &'static str {
         Agent::Interpreter => "Interpreter",
         Agent::Architect => "Architect",
         Agent::Conductor => "Conductor",
+        Agent::Reflector => "Reflector",
     }
 }
 
@@ -3412,4 +3422,61 @@ fn tool_icon(tool: &str) -> (&'static str, Color) {
 fn display_width(s: &str) -> usize {
     use unicode_width::UnicodeWidthStr;
     UnicodeWidthStr::width(s)
+}
+
+#[cfg(test)]
+mod agent_tests {
+    use super::*;
+
+    #[test]
+    fn agent_key_round_trips_for_every_agent() {
+        for a in [
+            Agent::Interpreter,
+            Agent::Architect,
+            Agent::Conductor,
+            Agent::Reflector,
+        ] {
+            assert_eq!(parse_agent_key(agent_key(a)), a);
+        }
+        assert_eq!(parse_agent_key("reflector"), Agent::Reflector);
+    }
+
+    #[test]
+    fn tab_cycle_visits_all_four_agents_in_order() {
+        let mut a = Agent::Interpreter;
+        let mut seen = vec![a];
+        for _ in 0..4 {
+            a = next_agent(a);
+            seen.push(a);
+        }
+        assert_eq!(
+            seen,
+            vec![
+                Agent::Interpreter,
+                Agent::Architect,
+                Agent::Conductor,
+                Agent::Reflector,
+                Agent::Interpreter
+            ]
+        );
+    }
+
+    #[test]
+    fn reflector_has_distinct_label_accent_and_logo() {
+        assert_eq!(agent_name(Agent::Reflector), "Reflector");
+        assert_eq!(agent_tag(Agent::Reflector).content.trim(), "[Reflector]");
+        assert_eq!(
+            agent_tag(Agent::Reflector).content.len(),
+            agent_tag(Agent::Conductor).content.len()
+        );
+        assert_ne!(
+            theme::agent_accent(Agent::Reflector),
+            theme::agent_accent(Agent::Conductor)
+        );
+        assert_eq!(
+            theme::agent_accent(Agent::Reflector),
+            theme::phase_accent(Phase::Reflecting)
+        );
+        assert!(theme::phase_logo(Phase::Reflecting).is_some());
+    }
 }

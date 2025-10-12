@@ -30,6 +30,7 @@ pub mod identity {
     pub const INTERPRETER: &str = include_str!("../HAL/interpreter.md");
     pub const ARCHITECT: &str = include_str!("../HAL/architect.md");
     pub const CONDUCTOR: &str = include_str!("../HAL/conductor.md");
+    pub const REFLECTOR: &str = include_str!("../HAL/reflector.md");
     pub const TOOLS: &str = include_str!("../HAL/tools.md");
     pub const FLOW: &str = include_str!("../HAL/flow.md");
 }

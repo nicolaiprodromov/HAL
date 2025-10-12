@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-/// HAL — run natural-language pseudo-code through a three-agent pipeline.
+/// HAL — run natural-language pseudo-code through a four-agent pipeline.
 #[derive(Debug, Parser)]
 #[command(name = "hal", version, about, long_about = None)]
 struct Cli {

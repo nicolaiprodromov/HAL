@@ -1,4 +1,4 @@
-//! Post-pipeline interactive chat with one of the three agents.
+//! Post-pipeline interactive chat with one of the four agents.
 //!
 //! After the pipeline (Interpret → Build → Run → Reflect) has finished,
 //! the TUI keeps running and lets the user converse with any agent to
@@ -113,6 +113,7 @@ async fn build_preamble(agent_kind: AgentKind, project: &Project, memory: &Arc<M
         AgentKind::Interpreter => identity::INTERPRETER,
         AgentKind::Architect => identity::ARCHITECT,
         AgentKind::Conductor => identity::CONDUCTOR,
+        AgentKind::Reflector => identity::REFLECTOR,
     };
     let digest = agents_ctx::memory_digest(memory, 5).await;
     format!(
@@ -163,6 +164,7 @@ fn render_prompt(history: &[ChatTurn], user_msg: &str) -> String {
                 AgentKind::Interpreter => "Interpreter",
                 AgentKind::Architect => "Architect",
                 AgentKind::Conductor => "Conductor",
+                AgentKind::Reflector => "Reflector",
             },
             t.assistant,
         ));
