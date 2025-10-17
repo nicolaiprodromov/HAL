@@ -439,6 +439,13 @@ async fn run_with_stop(
     if let Some(hc) = host_cwd_canon.as_ref() {
         env_vec.push(format!("HAL_HOST_CWD={}", hc.display()));
     }
+    // The container has no TTY, so pass the host terminal's size and
+    // capabilities for full-screen / colored programs. runtime.yaml wins.
+    for (k, v) in terminal_env() {
+        if !env.contains_key(k) {
+            env_vec.push(format!("{k}={v}"));
+        }
+    }
 
     // Always forward positional arguments via `"$@"` so scripts can read
     // them with `$1 / $2 / sys.argv`. `$0` is set to "hal-script" so
@@ -526,19 +533,21 @@ async fn run_with_stop(
 
     let log_tx = out.clone();
     let mut log_task = tokio::spawn(async move {
+        let mut out_dec = Utf8Decoder::default();
+        let mut err_dec = Utf8Decoder::default();
         while let Some(frame) = log_stream.next().await {
             match frame {
-                Ok(LogOutput::StdOut { message }) => {
-                    let s = String::from_utf8_lossy(&message).to_string();
-                    let _ = log_tx.send(OutputFrame::Stdout(s)).await;
+                Ok(LogOutput::StdOut { message }) | Ok(LogOutput::Console { message }) => {
+                    let s = out_dec.push(&message);
+                    if !s.is_empty() {
+                        let _ = log_tx.send(OutputFrame::Stdout(s)).await;
+                    }
                 }
                 Ok(LogOutput::StdErr { message }) => {
-                    let s = String::from_utf8_lossy(&message).to_string();
-                    let _ = log_tx.send(OutputFrame::Stderr(s)).await;
-                }
-                Ok(LogOutput::Console { message }) => {
-                    let s = String::from_utf8_lossy(&message).to_string();
-                    let _ = log_tx.send(OutputFrame::Stdout(s)).await;
+                    let s = err_dec.push(&message);
+                    if !s.is_empty() {
+                        let _ = log_tx.send(OutputFrame::Stderr(s)).await;
+                    }
                 }
                 Ok(_) => {}
                 Err(e) => {
@@ -548,6 +557,14 @@ async fn run_with_stop(
                     break;
                 }
             }
+        }
+        let s = out_dec.finish();
+        if !s.is_empty() {
+            let _ = log_tx.send(OutputFrame::Stdout(s)).await;
+        }
+        let s = err_dec.finish();
+        if !s.is_empty() {
+            let _ = log_tx.send(OutputFrame::Stderr(s)).await;
         }
     });
     guard.log_task = Some(log_task.abort_handle());
@@ -685,8 +702,105 @@ impl Drop for RunGuard {
     }
 }
 
+/// `COLUMNS`, `LINES`, `TERM` and `COLORTERM` for the container. Size is
+/// only reported when stdout is a terminal.
+fn terminal_env() -> Vec<(&'static str, String)> {
+    use std::io::IsTerminal;
+    let mut v = Vec::new();
+    if std::io::stdout().is_terminal() {
+        if let Ok((cols, rows)) = crossterm::terminal::size() {
+            v.push(("COLUMNS", cols.to_string()));
+            v.push(("LINES", rows.to_string()));
+        }
+    }
+    let term = std::env::var("TERM")
+        .ok()
+        .filter(|t| !t.is_empty() && t != "dumb")
+        .unwrap_or_else(|| "xterm-256color".to_string());
+    v.push(("TERM", term));
+    if let Ok(ct) = std::env::var("COLORTERM") {
+        if !ct.is_empty() {
+            v.push(("COLORTERM", ct));
+        }
+    }
+    v
+}
+
+/// Incremental UTF-8 decoder for one log stream. Incomplete trailing
+/// bytes wait for the next chunk; invalid bytes become U+FFFD.
+#[derive(Default)]
+struct Utf8Decoder {
+    carry: Vec<u8>,
+}
+
+impl Utf8Decoder {
+    fn push(&mut self, chunk: &[u8]) -> String {
+        self.carry.extend_from_slice(chunk);
+        let mut out = String::new();
+        let mut rest = &self.carry[..];
+        loop {
+            match std::str::from_utf8(rest) {
+                Ok(s) => {
+                    out.push_str(s);
+                    rest = &[];
+                    break;
+                }
+                Err(e) => {
+                    let (good, bad) = rest.split_at(e.valid_up_to());
+                    out.push_str(std::str::from_utf8(good).unwrap_or_default());
+                    match e.error_len() {
+                        Some(n) => {
+                            out.push('\u{FFFD}');
+                            rest = &bad[n..];
+                        }
+                        // Truncated sequence at the end: keep for later.
+                        None => {
+                            rest = bad;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        self.carry = rest.to_vec();
+        out
+    }
+
+    /// Flush leftovers at end of stream.
+    fn finish(&mut self) -> String {
+        let s = String::from_utf8_lossy(&self.carry).into_owned();
+        self.carry.clear();
+        s
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn utf8_decoder_handles_split_chars() {
+        let text = "a\u{e9}\u{20ac}\u{1f420}\u{2588}z";
+        let bytes = text.as_bytes();
+        for cut in 0..=bytes.len() {
+            let mut d = Utf8Decoder::default();
+            let mut got = d.push(&bytes[..cut]);
+            got.push_str(&d.push(&bytes[cut..]));
+            got.push_str(&d.finish());
+            assert_eq!(got, text, "cut at {cut}");
+        }
+    }
+
+    #[test]
+    fn utf8_decoder_invalid_and_flush() {
+        let mut d = Utf8Decoder::default();
+        assert_eq!(d.push(b"a\xffb\xc3"), "a\u{FFFD}b");
+        assert_eq!(d.push(b"\xa9"), "\u{e9}");
+        assert_eq!(d.push(b"\xe2\x82"), "");
+        assert_eq!(d.finish(), "\u{FFFD}");
+        assert_eq!(d.finish(), "");
+        // Invalid continuation does not stall later bytes.
+        assert_eq!(d.push(b"\xe2\x82z"), "\u{FFFD}z");
+    }
+
     use super::*;
     use bollard::query_parameters::ListContainersOptionsBuilder;
 
