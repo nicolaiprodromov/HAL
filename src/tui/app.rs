@@ -55,6 +55,7 @@ use tokio::sync::broadcast::Receiver;
 use crate::control::PauseController;
 use crate::events::{Agent, Event, EventSender, Phase};
 use crate::project::Project;
+use crate::tui::ansi::AnsiParser;
 use crate::tui::theme;
 
 /// Handles needed by the TUI to drive post-pipeline chat turns and
@@ -548,6 +549,8 @@ struct AppState {
     open_bubble: HashMap<Agent, usize>,
     thinking: std::collections::HashSet<Agent>,
     output_lines: Vec<Line<'static>>,
+    out_ansi: AnsiParser,
+    err_ansi: AnsiParser,
     phases: [PhaseTrack; 4],
     current_phase: Option<usize>,
     exit_code: Option<i32>,
@@ -604,6 +607,8 @@ impl AppState {
             open_bubble: HashMap::new(),
             thinking: std::collections::HashSet::new(),
             output_lines: Vec::new(),
+            out_ansi: AnsiParser::new(Style::default().fg(Color::White)),
+            err_ansi: AnsiParser::new(Style::default().fg(Color::Red)),
             phases: [
                 PhaseTrack::new(Phase::Interpreting, "Interpret"),
                 PhaseTrack::new(Phase::Building, "Build"),
@@ -642,15 +647,14 @@ impl AppState {
     }
 
     fn push_output(&mut self, text: String, err: bool) {
-        let style = if err {
-            Style::default().fg(Color::Red)
+        let parser = if err {
+            &mut self.err_ansi
         } else {
-            Style::default().fg(Color::White)
+            &mut self.out_ansi
         };
         for chunk in text.split_inclusive('\n') {
             let trimmed = chunk.trim_end_matches('\n');
-            self.output_lines
-                .push(Line::from(Span::styled(trimmed.to_string(), style)));
+            self.output_lines.push(parser.line(trimmed));
         }
         if self.output_lines.len() > 5000 {
             let n = self.output_lines.len() - 5000;

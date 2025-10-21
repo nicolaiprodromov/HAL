@@ -6,6 +6,7 @@
 //! flag on the CLI bypasses this module and routes events to stdout
 //! line-per-line instead.
 
+pub mod ansi;
 pub mod app;
 pub mod theme;
 
