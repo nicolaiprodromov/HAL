@@ -10,7 +10,7 @@ use crate::agents::{conductor, reflector};
 use crate::config::Config;
 use crate::container;
 use crate::control::PauseController;
-use crate::events::{Event, Phase};
+use crate::events::Event;
 use crate::llm::{LlmClient, XaiEmbedder};
 use crate::memory::Memory;
 use crate::pipeline;
@@ -68,8 +68,13 @@ pub async fn run(file: &Path, direct: bool, force: bool, args: &[String]) -> Res
     // Enable with `HAL_TRACE_EVENTS=/path/to/trace.jsonl`.
     let trace = spawn_trace_sink(tx.subscribe());
 
+    // Cover every way `hal` can be told to stop (Ctrl-C, SIGTERM, SIGHUP)
+    // in both modes, and sweep containers of earlier `hal` processes that
+    // were SIGKILLed.
+    crate::shutdown::spawn_signal_handler(tx.subscribe(), !direct);
+    crate::shutdown::reap_stale_containers().await;
+
     let sink = if direct {
-        spawn_interrupt_handler(tx.subscribe());
         Some(spawn_stdout_sink(rx))
     } else {
         None
@@ -146,6 +151,7 @@ pub async fn run(file: &Path, direct: bool, force: bool, args: &[String]) -> Res
         })
     };
 
+    let mut tui_result = None;
     if !direct {
         let runtime_handle = match LlmClient::new(config.clone()) {
             Ok(llm) => Some(tui::app::ChatRuntime {
@@ -165,14 +171,18 @@ pub async fn run(file: &Path, direct: bool, force: bool, args: &[String]) -> Res
                 None
             }
         };
-        let _ = tui::run_tui(
-            tui_rx,
-            Some(pause.clone()),
-            tx.clone(),
-            project.clone(),
-            runtime_handle,
-        )
-        .await?;
+        // Do not `?` here: a TUI failure (e.g. the terminal vanished)
+        // must still stop the container before the error is returned.
+        tui_result = Some(
+            tui::run_tui(
+                tui_rx,
+                Some(pause.clone()),
+                tx.clone(),
+                project.clone(),
+                runtime_handle,
+            )
+            .await,
+        );
     }
 
     // The user quit the TUI while the pipeline was still going (e.g. a
@@ -181,15 +191,22 @@ pub async fn run(file: &Path, direct: bool, force: bool, args: &[String]) -> Res
         stop_unfinished_work(&mut work).await;
     }
 
-    let exit_code = if work.is_finished() || direct {
+    let work_result = if work.is_finished() || direct {
         match work.await {
-            Ok(r) => r?,
-            Err(e) if e.is_cancelled() => 130,
-            Err(e) => return Err(e.into()),
+            Ok(r) => r,
+            Err(e) if e.is_cancelled() => Ok(130),
+            Err(e) => Err(e.into()),
         }
     } else {
-        130
+        Ok(130)
     };
+    // Last line of defense, whatever happened above: no container
+    // outlives this process.
+    container::shutdown_cleanup().await;
+    if let Some(Err(e)) = tui_result {
+        return Err(e);
+    }
+    let exit_code = work_result?;
     drop(tx);
     if let Some(s) = sink {
         let _ = s.await;
@@ -212,7 +229,7 @@ pub async fn run(file: &Path, direct: bool, force: bool, args: &[String]) -> Res
 async fn stop_unfinished_work(work: &mut tokio::task::JoinHandle<Result<i32>>) {
     container::interrupt_runs();
     if container::active_runs() > 0 {
-        eprintln!("hal: stopping the running container\u{2026}");
+        crate::shutdown::say("hal: stopping the running container\u{2026} (Ctrl-C to force quit)");
         let budget = container::INTERRUPT_GRACE + std::time::Duration::from_secs(5);
         let _ = tokio::time::timeout(budget, async {
             while container::active_runs() > 0 && !work.is_finished() {
@@ -235,45 +252,6 @@ async fn stop_unfinished_work(work: &mut tokio::task::JoinHandle<Result<i32>>) {
     if let Ok(docker) = container::connect() {
         container::remove_all_runs(&docker).await;
     }
-}
-
-/// `-d` Ctrl-C handling. While the program itself runs (the Running
-/// phase), the first Ctrl-C is forwarded to its container as SIGINT so
-/// it can exit cleanly (e.g. print its summary); a second one
-/// force-quits. In any other phase (building, reflecting) Ctrl-C quits
-/// right away and removes any probe containers.
-fn spawn_interrupt_handler(mut events: tokio::sync::broadcast::Receiver<Event>) {
-    use tokio::sync::broadcast::error::RecvError;
-    tokio::spawn(async move {
-        let mut running = false;
-        let mut bus_open = true;
-        loop {
-            tokio::select! {
-                evt = events.recv(), if bus_open => match evt {
-                    Ok(Event::Phase(p)) => running = matches!(p, Phase::Running),
-                    Ok(_) | Err(RecvError::Lagged(_)) => {}
-                    Err(RecvError::Closed) => bus_open = false,
-                },
-                r = tokio::signal::ctrl_c() => {
-                    if r.is_err() {
-                        return;
-                    }
-                    break;
-                }
-            }
-        }
-        if running && container::active_runs() > 0 {
-            eprintln!("\nhal: interrupt; stopping the container (Ctrl-C again to force quit)");
-            container::interrupt_runs();
-            if tokio::signal::ctrl_c().await.is_err() {
-                return;
-            }
-        }
-        if let Ok(docker) = container::connect() {
-            container::remove_all_runs(&docker).await;
-        }
-        std::process::exit(130);
-    });
 }
 
 fn spawn_stdout_sink(

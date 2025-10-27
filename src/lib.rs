@@ -19,6 +19,7 @@ pub mod agents;
 pub mod pipeline;
 
 pub mod container;
+pub mod shutdown;
 
 pub mod tui;
 

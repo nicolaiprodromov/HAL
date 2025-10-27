@@ -51,6 +51,10 @@ pub async fn run(file: &Path, direct: bool, force: bool) -> Result<()> {
         crate::events::spawn_project_log_sink(project.logs_dir(), tx.subscribe());
     let pause = Arc::new(PauseController::new());
 
+    // Ctrl-C / SIGTERM / SIGHUP: close the TUI, remove probe containers.
+    crate::shutdown::spawn_signal_handler(tx.subscribe(), !direct);
+    crate::shutdown::reap_stale_containers().await;
+
     let sink = if direct {
         Some(spawn_stdout_sink(rx))
     } else {
@@ -95,18 +99,37 @@ pub async fn run(file: &Path, direct: bool, force: bool) -> Result<()> {
         // Drop the outer sender so the channel closes once the build
         // task finishes (the TUI holds its own clone).
         drop(tx);
-        let _ = tui::run_tui(
+        let tui_result = tui::run_tui(
             tui_rx,
             Some(pause.clone()),
             tui_tx,
             project.clone(),
             Some(runtime),
         )
-        .await?;
+        .await;
+        // Quitting the TUI quits the build; do not keep calling the model
+        // invisibly behind a restored prompt.
+        if !build_task.is_finished() {
+            build_task.abort();
+        }
+        if let Err(e) = tui_result {
+            let _ = (&mut { build_task }).await;
+            crate::container::shutdown_cleanup().await;
+            return Err(e);
+        }
     } else {
         drop(tx);
     }
-    let outcome = build_task.await??;
+    let outcome = match build_task.await {
+        Ok(r) => r,
+        Err(e) if e.is_cancelled() => {
+            crate::container::shutdown_cleanup().await;
+            std::process::exit(130);
+        }
+        Err(e) => Err(e.into()),
+    };
+    crate::container::shutdown_cleanup().await;
+    let outcome = outcome?;
     if let Some(s) = sink {
         let _ = s.await;
     }

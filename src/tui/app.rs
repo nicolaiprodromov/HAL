@@ -29,6 +29,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -718,6 +719,46 @@ impl AppState {
 // event loop
 // ──────────────────────────────────────────────────────────────────────
 
+static TUI_ACTIVE: AtomicBool = AtomicBool::new(false);
+static KBD_ENHANCED: AtomicBool = AtomicBool::new(false);
+static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Ask the running TUI to close (from a signal handler). The event loop
+/// polls this, so the terminal is restored by the TUI's own exit path.
+pub fn request_quit() {
+    QUIT_REQUESTED.store(true, Ordering::SeqCst);
+}
+
+/// Put the terminal back the way the shell had it: cooked mode, main
+/// screen, no mouse capture, visible cursor. Idempotent and best-effort
+/// (a vanished terminal just makes the writes fail), so it is safe to
+/// call from a panic hook, a signal handler and `Drop` alike.
+pub fn restore_terminal() {
+    if !TUI_ACTIVE.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    let mut out = io::stdout();
+    if KBD_ENHANCED.swap(false, Ordering::SeqCst) {
+        let _ = execute!(out, PopKeyboardEnhancementFlags);
+    }
+    let _ = execute!(
+        out,
+        DisableMouseCapture,
+        LeaveAlternateScreen,
+        crossterm::cursor::Show
+    );
+    let _ = disable_raw_mode();
+}
+
+/// Restores the terminal when `run_tui` ends by any route, including `?`.
+struct TerminalGuard;
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        restore_terminal();
+    }
+}
+
 pub async fn run_tui(
     mut rx: Receiver<Event>,
     pause: Option<Arc<PauseController>>,
@@ -726,6 +767,15 @@ pub async fn run_tui(
     runtime: Option<ChatRuntime>,
 ) -> Result<i32> {
     enable_raw_mode()?;
+    TUI_ACTIVE.store(true, Ordering::SeqCst);
+    let _terminal_guard = TerminalGuard;
+    // A panic must not leave the shell in raw mode on the alt screen with
+    // its message unreadable: restore first, then print it.
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        restore_terminal();
+        prev_hook(info);
+    }));
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     // Ask the terminal to disambiguate modified Enter (and other) keys
@@ -734,6 +784,7 @@ pub async fn run_tui(
     // accept Alt+Enter as a fallback newline binding in the chatbox.
     let kbd_enhanced = supports_keyboard_enhancement().unwrap_or(false);
     if kbd_enhanced {
+        KBD_ENHANCED.store(true, Ordering::SeqCst);
         // DISAMBIGUATE_ESCAPE_CODES is enough to distinguish Shift+Enter
         // from Enter. We deliberately avoid REPORT_ALL_KEYS_AS_ESCAPE_CODES
         // because in kitty-protocol terminals it causes printable keys to
@@ -753,7 +804,7 @@ pub async fn run_tui(
     let mut last_draw = Instant::now();
 
     'outer: loop {
-        if state.quit_requested {
+        if state.quit_requested || QUIT_REQUESTED.load(Ordering::SeqCst) {
             final_exit = state.exit_code.unwrap_or(0);
             break;
         }
@@ -809,15 +860,7 @@ pub async fn run_tui(
         }
     }
 
-    disable_raw_mode()?;
-    if kbd_enhanced {
-        let _ = execute!(term.backend_mut(), PopKeyboardEnhancementFlags);
-    }
-    if state.mouse_captured {
-        execute!(term.backend_mut(), DisableMouseCapture)?;
-    }
-    execute!(term.backend_mut(), LeaveAlternateScreen)?;
-    term.show_cursor()?;
+    restore_terminal();
     Ok(final_exit)
 }
 

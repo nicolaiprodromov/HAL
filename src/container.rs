@@ -38,7 +38,8 @@ use bollard::models::{
 };
 use bollard::query_parameters::{
     CreateContainerOptionsBuilder, CreateImageOptionsBuilder, KillContainerOptionsBuilder,
-    LogsOptionsBuilder, RemoveContainerOptionsBuilder, WaitContainerOptionsBuilder,
+    ListContainersOptionsBuilder, LogsOptionsBuilder, RemoveContainerOptionsBuilder,
+    WaitContainerOptionsBuilder,
 };
 use bollard::Docker;
 use futures::StreamExt;
@@ -169,6 +170,86 @@ pub async fn remove_all_runs(docker: &Docker) {
     for name in names {
         let rm_opts = RemoveContainerOptionsBuilder::default().force(true).build();
         let _ = docker.remove_container(&name, Some(rm_opts)).await;
+    }
+}
+
+/// Label put on every container HAL creates.
+pub const LABEL_MANAGED: &str = "io.hal.managed";
+/// Label holding the pid of the `hal` process that owns the container.
+/// If that process is gone (SIGKILL, power loss) the container is stale.
+pub const LABEL_OWNER_PID: &str = "io.hal.owner-pid";
+
+/// Remove the containers of every `hal` process that no longer exists.
+/// `hal` cleans up after itself on every exit path it can observe
+/// (including SIGTERM/SIGHUP), but SIGKILL cannot be caught, so the next
+/// invocation sweeps up what was left. Returns the removed names.
+pub async fn reap_stale(docker: &Docker) -> Vec<String> {
+    let label = format!("{LABEL_MANAGED}=true");
+    let mut filters = HashMap::new();
+    filters.insert("label", vec![label.as_str()]);
+    let opts = ListContainersOptionsBuilder::default()
+        .all(true)
+        .filters(&filters)
+        .build();
+    let Ok(list) = docker.list_containers(Some(opts)).await else {
+        return Vec::new();
+    };
+    let mut removed = Vec::new();
+    for c in list {
+        let Some(id) = c.id else { continue };
+        if !owner_is_dead(c.labels.as_ref(), pid_alive) {
+            continue;
+        }
+        let rm = RemoveContainerOptionsBuilder::default().force(true).build();
+        if docker.remove_container(&id, Some(rm)).await.is_ok() {
+            let name = c
+                .names
+                .and_then(|n| n.into_iter().next())
+                .unwrap_or(id)
+                .trim_start_matches('/')
+                .to_string();
+            tracing::warn!(target: "hal::container", %name, "removed stale container of a dead hal process");
+            removed.push(name);
+        }
+    }
+    removed
+}
+
+/// True when the labels name an owner pid that `alive` says is gone.
+/// Containers with no usable owner label are left alone.
+fn owner_is_dead(labels: Option<&HashMap<String, String>>, alive: impl Fn(u32) -> bool) -> bool {
+    let Some(pid) = labels
+        .and_then(|l| l.get(LABEL_OWNER_PID))
+        .and_then(|v| v.parse::<u32>().ok())
+    else {
+        return false;
+    };
+    pid != std::process::id() && !alive(pid)
+}
+
+fn pid_alive(pid: u32) -> bool {
+    // `kill -0` checks existence without a libc dependency. If it cannot
+    // be run at all, assume alive: never remove a container on a guess.
+    match std::process::Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+    {
+        Ok(st) => st.success(),
+        Err(_) => true,
+    }
+}
+
+/// Final safety net before the process exits: force-remove any container
+/// still tracked as live, if Docker is reachable. No-op when none are.
+pub async fn shutdown_cleanup() {
+    if active_runs() == 0 {
+        return;
+    }
+    if let Ok(docker) = connect() {
+        let _ = tokio::time::timeout(Duration::from_secs(8), remove_all_runs(&docker)).await;
     }
 }
 
@@ -482,6 +563,10 @@ async fn run_with_stop(
         attach_stdout: Some(true),
         attach_stderr: Some(true),
         tty: Some(false),
+        labels: Some(HashMap::from([
+            (LABEL_MANAGED.to_string(), "true".to_string()),
+            (LABEL_OWNER_PID.to_string(), std::process::id().to_string()),
+        ])),
         host_config: Some(host_config),
         ..Default::default()
     };
@@ -776,6 +861,32 @@ impl Utf8Decoder {
 
 #[cfg(test)]
 mod tests {
+    fn owner_labels(pid: &str) -> HashMap<String, String> {
+        HashMap::from([(LABEL_OWNER_PID.to_string(), pid.to_string())])
+    }
+
+    #[test]
+    fn owner_is_dead_only_for_dead_owner_pids() {
+        let me = std::process::id().to_string();
+        assert!(owner_is_dead(Some(&owner_labels("4242")), |_| false));
+        assert!(!owner_is_dead(Some(&owner_labels("4242")), |_| true));
+        // Our own containers are never stale, whatever `alive` says.
+        assert!(!owner_is_dead(Some(&owner_labels(&me)), |_| false));
+        // Missing or garbled labels: leave the container alone.
+        assert!(!owner_is_dead(None, |_| false));
+        assert!(!owner_is_dead(Some(&HashMap::new()), |_| false));
+        assert!(!owner_is_dead(Some(&owner_labels("abc")), |_| false));
+    }
+
+    #[test]
+    fn pid_alive_distinguishes_live_and_reaped() {
+        assert!(pid_alive(std::process::id()));
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        assert!(!pid_alive(pid));
+    }
+
     #[test]
     fn utf8_decoder_handles_split_chars() {
         let text = "a\u{e9}\u{20ac}\u{1f420}\u{2588}z";
@@ -802,7 +913,6 @@ mod tests {
     }
 
     use super::*;
-    use bollard::query_parameters::ListContainersOptionsBuilder;
 
     /// Live Docker smoke test — pulls the default base image (already cached
     /// in the dev container) and runs `echo hal`. Ignored by default because
@@ -1057,5 +1167,134 @@ mod tests {
             leaked.is_empty(),
             "container leaked after cancel: {leaked:?}"
         );
+    }
+
+    async fn labeled_hal_containers(docker: &Docker) -> Vec<(String, HashMap<String, String>)> {
+        let label = format!("{LABEL_MANAGED}=true");
+        let mut filters = HashMap::new();
+        filters.insert("label", vec![label.as_str()]);
+        let opts = ListContainersOptionsBuilder::default()
+            .all(true)
+            .filters(&filters)
+            .build();
+        docker
+            .list_containers(Some(opts))
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|c| (c.id.unwrap_or_default(), c.labels.unwrap_or_default()))
+            .collect()
+    }
+
+    /// Containers carry the HAL labels with this process's pid, so a
+    /// later `hal` can tell whether their owner is still alive.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore]
+    async fn running_container_is_labeled_with_owner_pid() {
+        let docker = match connect() {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+        if docker.version().await.is_err() {
+            return;
+        }
+        let artifacts = tempfile::tempdir().unwrap();
+        let (tx, _rx) = mpsc::channel::<OutputFrame>(32);
+        let spec = ContainerSpec::permissive();
+        let env = HashMap::new();
+        let run = run_one_shot(
+            &docker,
+            "debian:stable-slim",
+            artifacts.path(),
+            "sleep 30",
+            None,
+            &env,
+            &[],
+            &spec,
+            tx,
+            None,
+        );
+        let me = std::process::id().to_string();
+        let poll = async {
+            for _ in 0..40 {
+                let found = labeled_hal_containers(&docker)
+                    .await
+                    .iter()
+                    .any(|(_, l)| l.get(LABEL_OWNER_PID) == Some(&me));
+                if found {
+                    return true;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+            false
+        };
+        // Finishing the poll drops the run future; RunGuard removes the container.
+        let found = tokio::select! {
+            _ = run => false,
+            f = poll => f,
+        };
+        assert!(found, "no container labeled with owner pid {me}");
+        for _ in 0..20 {
+            let left = labeled_hal_containers(&docker)
+                .await
+                .iter()
+                .any(|(_, l)| l.get(LABEL_OWNER_PID) == Some(&me));
+            if !left {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        panic!("labeled container leaked after abort");
+    }
+
+    /// `reap_stale` removes a running container whose owner pid is dead
+    /// (a SIGKILLed `hal`) and keeps one whose owner is alive.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore]
+    async fn reap_stale_removes_only_dead_owners() {
+        let docker = match connect() {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+        if docker.version().await.is_err() {
+            return;
+        }
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let dead_pid = child.id();
+        child.wait().unwrap();
+        // pid 1 always exists, and is not this process.
+        let mut ids = Vec::new();
+        for (tag, pid) in [("dead", dead_pid), ("alive", 1)] {
+            let cfg = ContainerCreateBody {
+                image: Some("debian:stable-slim".to_string()),
+                cmd: Some(vec!["sleep".to_string(), "60".to_string()]),
+                labels: Some(HashMap::from([
+                    (LABEL_MANAGED.to_string(), "true".to_string()),
+                    (LABEL_OWNER_PID.to_string(), pid.to_string()),
+                ])),
+                ..Default::default()
+            };
+            let name = format!("hal-run-test-{tag}-{}", std::process::id());
+            let opts = CreateContainerOptionsBuilder::default().name(&name).build();
+            ensure_image(&docker, "debian:stable-slim", None)
+                .await
+                .unwrap();
+            let id = docker.create_container(Some(opts), cfg).await.unwrap().id;
+            docker.start_container(&id, None).await.unwrap();
+            ids.push((tag, id));
+        }
+        let removed = reap_stale(&docker).await;
+        let exists = |id: String| {
+            let docker = docker.clone();
+            async move { docker.inspect_container(&id, None).await.is_ok() }
+        };
+        let dead_gone = !exists(ids[0].1.clone()).await;
+        let alive_kept = exists(ids[1].1.clone()).await;
+        let rm = RemoveContainerOptionsBuilder::default().force(true).build();
+        for (_, id) in &ids {
+            let _ = docker.remove_container(id, Some(rm.clone())).await;
+        }
+        assert!(dead_gone, "dead owner's container survived: {removed:?}");
+        assert!(alive_kept, "live owner's container was reaped");
     }
 }
