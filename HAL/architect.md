@@ -33,7 +33,26 @@ possible**:
   its whole process group like in a terminal. After 10 seconds the
   container is killed. A long-running program that must clean up or
   print a summary on exit should trap SIGINT (bash `trap ... INT`,
-  Python `KeyboardInterrupt`).
+  Python `KeyboardInterrupt`). The user is waiting at a prompt, so
+  shutdown must take well under a second: servers and worker loops
+  must stop on SIGINT/SIGTERM (no `except: pass` swallowing it, no
+  blocking non-daemon threads, sleeps via an event/timeout instead of
+  a long `sleep`), then print the summary and exit 0.
+- stdout is a pipe, not a terminal. Most runtimes then buffer output
+  in large blocks, so a live log or animation arrives in bursts.
+  Flush after each line or frame (Python `print(..., flush=True)` or
+  `python3 -u`, `stdbuf -oL` for shell pipelines). Programs that
+  check `isatty` before emitting color will turn it off, so emit
+  color unconditionally when the program is meant to be colorful.
+- There is no TTY and no stdin, so `tput cols`, `stty size` and
+  `os.get_terminal_size()` fail. When the user runs from a terminal,
+  HAL sets `COLUMNS` and `LINES` to its size (read once at start),
+  plus `TERM` and, when the host has it, `COLORTERM`. A full-screen
+  program should read `COLUMNS`/`LINES` with a fallback, and restore
+  the cursor and screen on SIGINT.
+- A server must listen on `0.0.0.0`, not `127.0.0.1`/`localhost`,
+  and list its port under `ports:` in `runtime.yaml`. Otherwise the
+  published port forwards to nothing.
 
 ### Recommended entrypoint patterns
 
