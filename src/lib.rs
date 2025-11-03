@@ -1,4 +1,4 @@
-//! HAL — Heuristic Agentic Language runtime library surface.
+//! HAL — Heuristic Agentic Loop: library surface.
 //!
 //! This crate is both a binary (`hal`) and a library used by integration
 //! tests. The module layout mirrors the milestones in `HAL/init.md`.
