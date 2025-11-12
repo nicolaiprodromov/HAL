@@ -1,0 +1,48 @@
+# pet.hal — a tiny terminal creature that keeps living between runs.
+# Run it from the folder where it should live:
+#   hal -d examples/pet.hal            say hello
+#   hal -d examples/pet.hal feed       feed it
+#   hal -d examples/pet.hal play       play with it
+#   hal -d examples/pet.hal sleep      put it to bed
+
+The pet lives in pet.json in the folder I run this from. If there is no
+pet.json, hatch a new pet: a short, cute, made-up name, a random body
+color, and a birthday of right now. Show a little hatching animation the
+first time.
+
+The pet has hunger, energy, and happiness, each from 0 to 100. Time keeps
+passing while the program is not running. Use the real time since the
+last run to catch up:
+    every hour away: hunger +8, energy -4, happiness -3
+    nothing goes below 0 or above 100
+
+It keeps its own clock: between 22:00 and 07:00 it is asleep. Use the
+zone in the TZ environment variable, or UTC if TZ is unset. A sleeping
+pet ignores feed and play, snores softly ("z", "Z", "z" floating up),
+and gains energy instead of losing it.
+
+The first argument is the command:
+    (none)  show the pet for 8 seconds, idling: blink, look around,
+            sometimes hop. Underneath, three colored bars for hunger,
+            energy, and happiness, and one line of what it's thinking,
+            based on its mood ("tummy rumbles...", "zoomies!!").
+    feed    hunger -30, an eating animation with crumbs falling
+    play    happiness +25, energy -15, a bouncing animation with hearts
+    sleep   energy +40, lights dim, it curls up
+    anything else: print the list of commands and exit 1
+
+Draw the pet with small hand-made ASCII art in its body color: about
+5 lines tall, with different faces for happy, hungry, tired, and asleep.
+Animate at about 10 frames per second, redrawing in place. Use 24-bit
+color, because stdout is not a terminal.
+
+After every command, add 1 to the pet's age in "visits", save pet.json,
+and print one closing line like "Mochi is 3 days old, visit #12."
+
+If hunger reaches 100, the pet runs away. Show a short sad animation,
+write goodbye.txt next to pet.json with a letter from the pet (signed
+with its name), delete pet.json, and exit 0. The next run hatches a new
+pet.
+
+Never crash on a damaged pet.json. Say the old pet wandered off, then
+hatch a new one.

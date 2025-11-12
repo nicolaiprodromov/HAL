@@ -1,0 +1,36 @@
+# git-story.hal — the life of a git repository, told as an animation and a poster.
+# Run it inside any repo:   hal -d path/to/git-story.hal
+# Or point it at one:       hal -d examples/git-story.hal ../some-repo
+
+The repo is the path in the first argument, or the folder I run this
+from. If that is not a git repository, say so in one friendly line and
+exit 1. git may refuse a repo owned by another user; mark it as a safe
+directory first.
+
+Read the whole history: every commit's time, author, and the files it
+touched with lines added and removed. Merge commits count as commits but
+not toward lines changed. Fold together authors that are clearly the same
+person (same email, or same name with different emails).
+
+Part 1, in the terminal, as an animation about 15 seconds long:
+    A title card with the repo name, its age, and its first commit message.
+    Then a timeline that grows left to right, one column per week (or per
+    day for repos younger than two months). Column height is the number
+    of commits. Color it from cool blue (quiet) to bright orange (busy).
+    While it grows, show the month and year under the playhead, and pop
+    up a short label at notable moments: the first commit, the busiest
+    week, the biggest single commit, and long silences (over 30 days).
+    Finish with a leaderboard: top 5 authors with commit counts and a
+    bar each, then the 5 files changed most often.
+    Use 24-bit color. Redraw in place, one write per frame, no flicker.
+
+Part 2, write story.html in the folder I run this from:
+    A single self-contained page, no external files, that looks like a
+    printed poster. Dark paper, big type. The repo name, a hero chart
+    of commits over time, a heatmap calendar of activity by weekday and
+    hour, the author leaderboard, the most-changed files, and three
+    "fun facts" computed from the data (longest streak of days with
+    commits, the most common word in commit messages, the latest-night
+    commit). Charts are inline SVG.
+
+At the end print the full path to story.html.

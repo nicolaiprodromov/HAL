@@ -1,0 +1,6 @@
+# vague.hal — almost no spec at all. Everything else is up to HAL.
+# Rebuild with -f to get a different interpretation each time:
+#   hal -d -f examples/vague.hal
+
+Make something calming to watch in the terminal for about a minute.
+Surprise me.

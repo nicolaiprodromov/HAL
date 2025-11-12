@@ -1,0 +1,32 @@
+# quakes.hal — a live 3D globe of the world's earthquakes, in the browser.
+# Run it, then open http://localhost:8080
+
+Serve a web page on port 8080. The server must listen on all interfaces
+(0.0.0.0) so it can be reached from outside the container. When it is
+ready, print the address to open, http://localhost:8080.
+
+The page is a full-window, dark, space-like scene with a 3D globe in the
+middle that slowly spins on its own. The user can drag to rotate it and
+scroll to zoom.
+
+Plot every earthquake from the last 24 hours, using the public USGS feed
+at https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson.
+Each quake is a glowing point that pulses gently. Bigger magnitudes get
+bigger, brighter pulses, colored from cool teal for small quakes to hot
+red for large ones. Hovering a quake shows its place, magnitude, and how
+long ago it happened.
+
+Refresh the data every minute. When a quake appears that wasn't there
+before, make it ripple outward across the globe's surface so it's easy to
+spot.
+
+In a corner, show a small panel with the number of quakes today, the
+strongest one, and when the data last updated.
+
+In the terminal, print one colored line per quake as it arrives: the
+time, the magnitude, and the place. Color the line by magnitude the same
+way the globe does. Print the whole day's list on startup, then only the
+new ones.
+
+Keep running until Ctrl-C, then print how many quakes were seen and exit
+cleanly.

@@ -1,0 +1,75 @@
+// aquarium.hal — a full-screen, colorful terminal aquarium.
+// Best viewed with: hal -d examples/aquarium.hal [seconds]
+
+// screen size comes from the COLUMNS / LINES env vars, fallback 100 x 30
+width  = env COLUMNS or 100
+height = env LINES or 30
+
+// how long to run, in seconds. first argument, default 60
+duration = arg 1 or 60
+
+fps = 20
+
+water  = deep blue gradient, darker towards the bottom
+sand   = a strip of yellow/brown dots along the last 2 rows
+
+// sprites: use these exactly, right-facing and left-facing.
+// spaces inside a sprite are transparent, the water shows through.
+
+fish_small  = right "><>"           left "<><"           // fast, bright colors
+fish_medium = right "><(((°>"       left "<°)))><"       // medium speed
+
+fish_big right:              fish_big left:              // slow, striped
+    "   ___  "                   "  ___   "
+    "\/  o \ "                   " / o  \/"
+    "/\____/ "                   " \____/\"
+
+shark right:                 shark left:                 // grey, white teeth
+    "         /|       "         "       |\         "
+    "\_______/ |_____  "         "  _____| \_______/"
+    " >           o  \ "         " /  o           < "
+    "/________vvvvv__/ "         " \__vvvvv________\"
+
+setup():
+    fill screen with water, draw sand
+    plant 6 to 10 seaweed stalks in the sand, random heights, green
+    spawn 12 fish of random kinds, random rows, random directions,
+          random speeds, random bright colors
+
+frame(t):
+    for stalk in seaweed:
+        // sway gently, each stalk offset in phase from the others
+        bend stalk left and right with a sine wave over time
+
+    for fish in fishes:
+        move fish by its speed in its direction
+        sometimes (about once every 10 seconds per fish) turn around
+        when fish leaves the screen, it comes back from the other side
+            on a new random row
+
+    every so often a fish breathes out a bubble: "o" then "O" then "°"
+    bubbles rise, wobble left/right a little, and pop at the surface
+
+    every 15 seconds:
+        shark crosses the screen from one side to the other
+        while the shark is near, fish in its path scatter up and down fast
+
+    draw everything over the water and flush the frame at once
+    // never let frames tear or flicker
+
+main():
+    switch to the alternate screen, hide the cursor
+    setup()
+    while time < duration:
+        frame(time)
+        sleep 1 / fps
+    fade the whole scene to black over 1.5 seconds
+    restore the screen and the cursor
+
+    // Ctrl-C must also restore the screen and the cursor, then exit 0
+
+main()
+
+// Use 24-bit color escape codes. stdout is not a terminal, so always emit
+// color and flush after every frame. Draw each frame as one write with
+// cursor-home, not by clearing the screen.

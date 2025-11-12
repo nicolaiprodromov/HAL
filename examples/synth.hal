@@ -1,0 +1,35 @@
+# synth.hal — write a song in plain words, get a .wav file.
+# Run it:  hal -d examples/synth.hal [output-name]
+# It writes <output-name>.wav (default song.wav) into the folder you run it from.
+
+The song:
+    tempo 92 bpm, key of A minor, 16 bars of 4/4
+    chords, one per bar, repeating: Am  F  C  G
+    bars 13 to 16 are the ending: Am  F  G  Am, and the last bar rings out
+
+The instruments, all synthesized from scratch, no samples:
+    pad    soft and wide, holds each chord, slow attack and release,
+           slightly detuned and spread across left and right
+    bass   plucky, plays the root of each chord on beats 1 and 3, with a
+           short slide up into the next bar's root
+    lead   a gentle bell-like tone, enters at bar 5, plays a simple melody
+           you write that only uses notes from the current chord or the
+           A minor scale, and ends on A
+    drums  kick on 1 and 3, snare on 2 and 4, closed hats on eighth notes
+           with a little swing. Drums start at bar 5 and stop for the
+           last bar.
+
+Mix it so nothing clips: leave about 1 dB of headroom, keep the bass
+centered, and add a light reverb on the pad and lead. Fade in over the
+first half-second and fade out over the last two seconds.
+
+Write a 44.1 kHz, 16-bit, stereo WAV.
+
+While rendering, draw a piano roll in the terminal that scrolls as each
+bar is finished: one row per pitch that is used, a colored block per note
+(a different color for each instrument), bar numbers along the bottom.
+Use 24-bit color, because stdout is not a terminal. When done, print the
+file's full path, its length in seconds, and its size.
+
+The same input must always give exactly the same file. If anything needs
+randomness, seed it with a fixed number.
