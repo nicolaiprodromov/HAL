@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>HAL promo</title>
+<style>
+@font-face { font-family: "JBM"; font-weight: 300; src: url(fonts/JetBrainsMono-Light.woff2) format("woff2"); }
+@font-face { font-family: "JBM"; font-weight: 400; src: url(fonts/JetBrainsMono-Regular.woff2) format("woff2"); }
+@font-face { font-family: "JBM"; font-weight: 500; src: url(fonts/JetBrainsMono-Medium.woff2) format("woff2"); }
+@font-face { font-family: "JBM"; font-weight: 700; src: url(fonts/JetBrainsMono-Bold.woff2) format("woff2"); }
+@font-face { font-family: "JBM"; font-weight: 800; src: url(fonts/JetBrainsMono-ExtraBold.woff2) format("woff2"); }
+html, body { margin: 0; background: #000; overflow: hidden; }
+#out { display: block; width: 1920px; height: 1080px; }
+#content { display: none; }
+</style></head>
+<body>
+<canvas id="out" width="1920" height="1080"></canvas>
+<canvas id="content" width="1920" height="1080"></canvas>
+<script src="engine/logos.js"></script>
+<script src="engine/core.js"></script>
+<script src="engine/kit.js"></script>
+<script src="engine/post.js"></script>
+<script src="timeline.js"></script>
+<script>
+// ?scenes=a,b  -> load only these scene files (default: every scene in the timeline)
+// ?nopost=1    -> skip the CRT pass (shows the raw content canvas)
+(async () => {
+  const q = new URLSearchParams(location.search);
+  HAL.state.timeline = window.HAL_TIMELINE;
+  const ids = q.get('scenes') ? q.get('scenes').split(',') : HAL_TIMELINE.map(s => s[0]);
+  window.HAL_ERRORS = [];
+  window.addEventListener('error', e => HAL_ERRORS.push(`${e.filename}:${e.lineno} ${e.message}`));
+  await Promise.all(ids.map(id => new Promise(res => {
+    const s = document.createElement('script');
+    s.src = `scenes/${id}.js?v=${Date.now()}`;
+    s.onload = res; s.onerror = () => { HAL_ERRORS.push(`missing scenes/${id}.js`); res(); };
+    document.body.appendChild(s);
+  })));
+  const weights = [300, 400, 500, 700, 800];
+  await Promise.all(weights.map(w => document.fonts.load(`${w} 32px "JBM"`, 'A█─⠋')));
+  await document.fonts.ready;
+  const content = document.getElementById('content');
+  HAL.state.canvas = content;
+  HAL.state.g = content.getContext('2d', { alpha: false, willReadFrequently: false });
+  const out = document.getElementById('out');
+  if (q.get('nopost')) {
+    const og = out.getContext('2d');
+    HAL.state.post = { render: (c) => og.drawImage(c, 0, 0) };
+  } else {
+    HAL.state.post = new HAL_Post(out, HAL.W, HAL.H);
+  }
+  window.HAL_READY = true;
+})();
+</script>
+</body></html>
